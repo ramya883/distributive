@@ -1,0 +1,5 @@
+# System packages required by Streamlit and dependencies
+# Install via apt-get in Docker
+build-essential
+curl
+wget

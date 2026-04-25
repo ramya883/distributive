@@ -1,0 +1,114 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: distributive-deployment
+  labels:
+    app: distributive
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: distributive
+  template:
+    metadata:
+      labels:
+        app: distributive
+    spec:
+      initContainers:
+        # Wait for MongoDB to be ready before starting the app
+        - name: wait-for-mongo
+          image: busybox:1.28
+          command: ['sh', '-c', 'until nc -z localhost 27017; do echo waiting for mongo; sleep 2; done']
+
+      containers:
+        # STREAMLIT APPLICATION CONTAINER
+        - name: distributive
+          image: distributive-app:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8501
+              name: streamlit
+          env:
+            - name: MONGO_URI
+              value: "mongodb://localhost:27017"
+            - name: MONGO_DB_NAME
+              value: "distributive_db"
+            - name: STREAMLIT_SERVER_PORT
+              value: "8501"
+            - name: STREAMLIT_SERVER_ADDRESS
+              value: "0.0.0.0"
+            - name: STREAMLIT_LOGGER_LEVEL
+              value: "info"
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "500m"
+            limits:
+              memory: "1Gi"
+              cpu: "1000m"
+          livenessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /_stcore/health
+              port: 8501
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 3
+          volumeMounts:
+            - name: cache
+              mountPath: /root/.streamlit
+        
+        # MONGODB SIDECAR CONTAINER
+        - name: mongo
+          image: mongo:7
+          ports:
+            - containerPort: 27017
+              name: mongodb
+          env:
+            - name: MONGO_INITDB_DATABASE
+              value: "distributive_db"
+          volumeMounts:
+            - name: mongo-data
+              mountPath: /data/db
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "250m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+          livenessProbe:
+            exec:
+              command:
+                - mongosh
+                - --eval
+                - 'db.adminCommand("ping")'
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - mongosh
+                - --eval
+                - 'db.adminCommand("ping")'
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      
+      volumes:
+        - name: mongo-data
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
